@@ -39,22 +39,13 @@ fn test_point_for_row_and_column_from_external_source() {
     );
     let snapshot = buffer.snapshot();
 
+    assert_eq!(snapshot.point_from_external_input(0, 0), Point::new(0, 0));
+    assert_eq!(snapshot.point_from_external_input(0, 4), Point::new(0, 6));
     assert_eq!(
-        snapshot.point_for_row_and_column_from_external_source(0, 0),
-        Point::new(0, 0)
-    );
-    assert_eq!(
-        snapshot.point_for_row_and_column_from_external_source(0, 4),
-        Point::new(0, 6)
-    );
-    assert_eq!(
-        snapshot.point_for_row_and_column_from_external_source(0, 100),
+        snapshot.point_from_external_input(0, 100),
         Point::new(0, 10)
     );
-    assert_eq!(
-        snapshot.point_for_row_and_column_from_external_source(1, 3),
-        Point::new(1, 3)
-    );
+    assert_eq!(snapshot.point_from_external_input(1, 3), Point::new(1, 3));
 }
 
 #[gpui::test(iterations = 100)]

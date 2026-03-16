@@ -2254,15 +2254,26 @@ impl BufferSnapshot {
         (row_end_offset - row_start_offset) as u32
     }
 
-    pub fn point_for_column_in_range_from_external_source<'a>(
-        range: Range<Point>,
-        text_chunks: impl Iterator<Item = &'a str>,
-        column: u32,
-    ) -> Point {
-        let mut point = range.start;
-        let mut remaining_columns = column;
+    /// A function to convert character offsets from e.g. user's `go.mod:22:33` input into byte-offset Point columns.
+    pub fn point_from_external_input(&self, row: u32, characters: u32) -> Point {
+        const MAX_BYTES_IN_UTF_8: u32 = 4;
 
-        for chunk in text_chunks {
+        let row = row.min(self.max_point().row);
+        let start = Point::new(row, 0);
+        let end = self.clip_point(
+            Point::new(
+                row,
+                characters
+                    .saturating_mul(MAX_BYTES_IN_UTF_8)
+                    .saturating_add(1),
+            ),
+            Bias::Right,
+        );
+        let range = start..end;
+        let mut point = range.start;
+        let mut remaining_columns = characters;
+
+        for chunk in self.text_for_range(range) {
             for character in chunk.chars() {
                 if remaining_columns == 0 {
                     return point;
@@ -2271,23 +2282,7 @@ impl BufferSnapshot {
                 point.column += character.len_utf8() as u32;
             }
         }
-
         point
-    }
-
-    pub fn point_for_row_and_column_from_external_source(&self, row: u32, column: u32) -> Point {
-        let row = row.min(self.max_point().row);
-        let start = Point::new(row, 0);
-        let end = self.clip_point(
-            Point::new(row, column.saturating_mul(4).saturating_add(1)),
-            Bias::Right,
-        );
-        let range = start..end;
-        Self::point_for_column_in_range_from_external_source(
-            range.clone(),
-            self.text_for_range(range),
-            column,
-        )
     }
 
     pub fn line_indents_in_row_range(

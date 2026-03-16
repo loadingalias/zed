@@ -461,8 +461,7 @@ pub fn navigate_to_positions(
                             return;
                         };
                         let buffer_snapshot = buffer.read(cx).snapshot();
-                        let point =
-                            buffer_snapshot.point_for_row_and_column_from_external_source(row, col);
+                        let point = buffer_snapshot.point_from_external_input(row, col);
                         editor.go_to_singleton_buffer_point(point, window, cx);
                     });
                 })

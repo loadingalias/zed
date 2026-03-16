@@ -11,6 +11,7 @@ use gpui::{
     Subscription, div, prelude::*,
 };
 use language::Buffer;
+use multi_buffer::MultiBufferRow;
 use text::{Bias, Point};
 use theme::ActiveTheme;
 use ui::prelude::*;
@@ -227,19 +228,15 @@ impl GoToLine {
 
         let row = query_row.saturating_sub(1);
         let character = query_char.unwrap_or(0).saturating_sub(1);
-        let row = row.min(snapshot.max_point().row);
-        let start = Point::new(row, 0);
-        let end = snapshot.clip_point(
-            Point::new(row, character.saturating_mul(4).saturating_add(1)),
-            Bias::Right,
-        );
-        let range = start..end;
-        let point = text::BufferSnapshot::point_for_column_in_range_from_external_source(
-            range.clone(),
-            snapshot.text_for_range(range),
-            character,
-        );
-        Some(snapshot.anchor_before(point))
+
+        let target_multi_buffer_row = MultiBufferRow(row);
+        let (buffer_snapshot, target_in_buffer, _) = snapshot.point_to_buffer_point(Point::new(
+            target_multi_buffer_row.min(snapshot.max_row()).0,
+            0,
+        ))?;
+        let target_point =
+            buffer_snapshot.point_from_external_input(target_in_buffer.row, character);
+        Some(snapshot.anchor_before(target_point))
     }
 
     fn relative_line_from_query(&self, cx: &App) -> Option<i32> {
