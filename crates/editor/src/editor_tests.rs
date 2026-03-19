@@ -9850,6 +9850,116 @@ async fn test_select_all_matches_does_not_scroll(cx: &mut TestAppContext) {
 }
 
 #[gpui::test]
+async fn test_select_all_matches_edit_keeps_scroll_on_initiating_selection(
+    cx: &mut TestAppContext,
+) {
+    init_test(cx, |_| {});
+
+    let mut cx = EditorTestContext::new(cx).await;
+
+    let large_body_1 = "\nd".repeat(200);
+    let large_body_2 = "\ne".repeat(200);
+
+    cx.set_state(&format!(
+        "abc\nabc{large_body_1} «ˇa»bc{large_body_2}\nefabc\nabc"
+    ));
+    let initial_scroll_position = cx.update_editor(|editor, _, cx| {
+        let scroll_position = editor.scroll_position(cx);
+        assert!(
+            scroll_position.y > 0.0,
+            "Initial selection should start in the middle of the document"
+        );
+        scroll_position
+    });
+
+    cx.update_editor(|editor, window, cx| {
+        editor
+            .select_all_matches(&SelectAllMatches, window, cx)
+            .unwrap();
+    });
+    cx.update_editor(|editor, window, cx| {
+        editor.handle_input("x", window, cx);
+    });
+
+    let scroll_position_after_edit = cx.update_editor(|editor, _, cx| editor.scroll_position(cx));
+    assert_eq!(
+        initial_scroll_position, scroll_position_after_edit,
+        "Editing after select all matches should keep the initiating selection as the autoscroll target"
+    );
+}
+
+#[gpui::test]
+async fn test_select_all_matches_edit_keeps_scroll_on_reversed_initiating_selection(
+    cx: &mut TestAppContext,
+) {
+    init_test(cx, |_| {});
+
+    let mut cx = EditorTestContext::new(cx).await;
+
+    let large_body_1 = "\nd".repeat(200);
+    let large_body_2 = "\ne".repeat(200);
+
+    cx.update_editor(|editor, window, cx| {
+        editor.set_text(
+            format!("abc\nabc{large_body_1} abc{large_body_2}\nefabc\nabc"),
+            window,
+            cx,
+        );
+    });
+    let target_point = cx.update_editor(|editor, _, cx| {
+        let snapshot = editor.display_snapshot(cx);
+        let target_offset = editor
+            .buffer()
+            .read(cx)
+            .read(cx)
+            .text_for_range(MultiBufferOffset(0)..snapshot.buffer_snapshot().len())
+            .collect::<String>()
+            .match_indices("abc")
+            .nth(2)
+            .map(|(offset, _)| MultiBufferOffset(offset))
+            .expect("third abc match should exist");
+        target_offset.to_point(snapshot.buffer_snapshot())
+    });
+
+    cx.update_editor(|editor, window, cx| {
+        editor.change_selections(
+            SelectionEffects::scroll(Autoscroll::fit()),
+            window,
+            cx,
+            |selections| {
+                selections.select_ranges([
+                    Point::new(target_point.row, target_point.column + 1)..target_point
+                ]);
+            },
+        );
+    });
+
+    let initial_scroll_position = cx.update_editor(|editor, _, cx| {
+        let scroll_position = editor.scroll_position(cx);
+        assert!(
+            scroll_position.y > 0.0,
+            "Reversed initiating selection should still start in the middle of the document"
+        );
+        scroll_position
+    });
+
+    cx.update_editor(|editor, window, cx| {
+        editor
+            .select_all_matches(&SelectAllMatches, window, cx)
+            .unwrap();
+    });
+    cx.update_editor(|editor, window, cx| {
+        editor.handle_input("x", window, cx);
+    });
+
+    let scroll_position_after_edit = cx.update_editor(|editor, _, cx| editor.scroll_position(cx));
+    assert_eq!(
+        initial_scroll_position, scroll_position_after_edit,
+        "Editing after select all matches should preserve a reversed initiating selection as newest"
+    );
+}
+
+#[gpui::test]
 async fn test_undo_format_scrolls_to_last_edit_pos(cx: &mut TestAppContext) {
     init_test(cx, |_| {});
 
