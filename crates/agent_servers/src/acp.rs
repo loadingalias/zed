@@ -22,6 +22,7 @@ use util::process::Child;
 use std::path::PathBuf;
 use std::process::Stdio;
 use std::rc::Rc;
+use std::time::Duration;
 use std::{any::Any, cell::RefCell};
 use thiserror::Error;
 
@@ -35,6 +36,7 @@ use terminal::terminal_settings::{AlternateScroll, CursorShape, TerminalSettings
 use crate::GEMINI_ID;
 
 pub const GEMINI_TERMINAL_AUTH_METHOD_ID: &str = "spawn-gemini-cli";
+const ACP_INITIALIZE_TIMEOUT: Duration = Duration::from_secs(15);
 
 #[derive(Debug, Error)]
 #[error("Unsupported version")]
@@ -293,28 +295,39 @@ impl AcpConnection {
             });
         });
 
-        let response = connection
-            .initialize(
-                acp::InitializeRequest::new(acp::ProtocolVersion::V1)
-                    .client_capabilities(
-                        acp::ClientCapabilities::new()
-                            .fs(acp::FileSystemCapabilities::new()
-                                .read_text_file(true)
-                                .write_text_file(true))
-                            .terminal(true)
-                            .auth(acp::AuthCapabilities::new().terminal(true))
-                            // Experimental: Allow for rendering terminal output from the agents
-                            .meta(acp::Meta::from_iter([
-                                ("terminal_output".into(), true.into()),
-                                ("terminal-auth".into(), true.into()),
-                            ])),
-                    )
-                    .client_info(
-                        acp::Implementation::new("zed", version)
-                            .title(release_channel.map(ToOwned::to_owned)),
-                    ),
-            )
-            .await?;
+        let initialize = connection.initialize(
+            acp::InitializeRequest::new(acp::ProtocolVersion::V1)
+                .client_capabilities(
+                    acp::ClientCapabilities::new()
+                        .fs(acp::FileSystemCapabilities::new()
+                            .read_text_file(true)
+                            .write_text_file(true))
+                        .terminal(true)
+                        .auth(acp::AuthCapabilities::new().terminal(true))
+                        // Experimental: Allow for rendering terminal output from the agents
+                        .meta(acp::Meta::from_iter([
+                            ("terminal_output".into(), true.into()),
+                            ("terminal-auth".into(), true.into()),
+                        ])),
+                )
+                .client_info(
+                    acp::Implementation::new("zed", version)
+                        .title(release_channel.map(ToOwned::to_owned)),
+                ),
+        );
+        let timeout = cx.background_executor().timer(ACP_INITIALIZE_TIMEOUT);
+        let response = match futures::future::select(Box::pin(initialize), Box::pin(timeout)).await
+        {
+            futures::future::Either::Left((Ok(response), _)) => response,
+            futures::future::Either::Left((Err(err), _)) => {
+                child.kill().log_err();
+                return Err(err.into());
+            }
+            futures::future::Either::Right(_) => {
+                child.kill().log_err();
+                return Err(anyhow!(initialize_timeout_error(&agent_id)));
+            }
+        };
 
         if response.protocol_version < MINIMUM_SUPPORTED_VERSION {
             return Err(UnsupportedVersion.into());
@@ -477,6 +490,21 @@ impl AcpConnection {
             }
         }
     }
+}
+
+fn initialize_timeout_error(agent_id: &AgentId) -> LoadError {
+    let mut message = format!(
+        "Timed out waiting for {} to respond to ACP initialize.",
+        agent_id
+    );
+
+    if agent_id.0.as_ref() == GEMINI_ID {
+        message.push_str(
+            " If Gemini sandboxing is enabled in `.gemini/settings.json` via `tools.sandbox`, disable it and retry until Gemini fixes ACP sandbox startup.",
+        );
+    }
+
+    LoadError::Other(message.into())
 }
 
 impl Drop for AcpConnection {
@@ -1210,6 +1238,19 @@ mod tests {
             ])
         );
         assert_eq!(terminal_auth_task.label, "Login");
+    }
+
+    #[test]
+    fn initialize_timeout_error_includes_gemini_hint() {
+        let error = initialize_timeout_error(&AgentId::new(GEMINI_ID));
+
+        match error {
+            LoadError::Other(message) => {
+                assert!(message.contains("Timed out waiting for gemini"));
+                assert!(message.contains("tools.sandbox"));
+            }
+            _ => unreachable!(),
+        }
     }
 }
 
