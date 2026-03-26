@@ -160,7 +160,7 @@ fn send_args_to_instance(args: &Args) -> anyhow::Result<()> {
             wsl: args.wsl.clone(),
             open_new_workspace: None,
             reuse: false,
-            env: None,
+            env: Some(std::env::vars().collect()),
             user_data_dir: args.user_data_dir.clone(),
         }
     };
