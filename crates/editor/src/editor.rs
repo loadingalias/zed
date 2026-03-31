@@ -13884,6 +13884,9 @@ impl Editor {
         let selection_start_point = first_selection.start.to_point(&snapshot);
         let selection_start_row = selection_start_point.row;
         let selection_start_column = selection_start_point.column;
+        let Some(buffer_id) = first_selection.start.text_anchor.buffer_id else {
+            return;
+        };
 
         self.change_selections(SelectionEffects::no_scroll(), window, cx, |s| {
             s.move_with(&mut |snapshot, sel| {
@@ -13901,11 +13904,6 @@ impl Editor {
             return;
         };
 
-        let selection = self.selections.first_anchor();
-        let Some(buffer_id) = selection.start.text_anchor.buffer_id else {
-            return;
-        };
-
         let entry_metadata = item.entries().first().and_then(|entry| match entry {
             ClipboardEntry::String(entry) => entry.metadata_json::<Vec<ClipboardSelection>>(),
             _ => None,
@@ -13913,7 +13911,8 @@ impl Editor {
 
         let item = if selection_count == 1 && first_selection_is_empty {
             if let Some(previous_ring) = cx.try_global::<KillRing>() {
-                if previous_ring.buffer_id == buffer_id
+                if previous_ring.can_append
+                    && previous_ring.buffer_id == buffer_id
                     && previous_ring.row == selection_start_row
                     && previous_ring.column == selection_start_column
                 {
@@ -13938,6 +13937,7 @@ impl Editor {
                         row: previous_ring.row,
                         column: previous_ring.column,
                         buffer_id: previous_ring.buffer_id,
+                        can_append: true,
                     }
                 } else {
                     KillRing {
@@ -13946,6 +13946,7 @@ impl Editor {
                         row: selection_start_row,
                         column: selection_start_column,
                         buffer_id,
+                        can_append: true,
                     }
                 }
             } else {
@@ -13955,6 +13956,7 @@ impl Editor {
                     row: selection_start_row,
                     column: selection_start_column,
                     buffer_id,
+                    can_append: true,
                 }
             }
         } else {
@@ -13964,6 +13966,7 @@ impl Editor {
                 row: selection_start_row,
                 column: selection_start_column,
                 buffer_id,
+                can_append: true,
             }
         };
 
@@ -13977,11 +13980,15 @@ impl Editor {
         cx: &mut Context<Self>,
     ) {
         self.hide_mouse_cursor(HideMouseCursorOrigin::TypingAction, cx);
-        let (text, metadata) = if let Some(kill_ring) = cx.try_global::<KillRing>() {
-            (kill_ring.text.clone(), kill_ring.metadata.clone())
-        } else {
+        if !cx.has_global::<KillRing>() {
             return;
-        };
+        }
+
+        let (text, metadata) = cx.update_global::<KillRing, _>(|kill_ring, _| {
+            kill_ring.can_append = false;
+            (kill_ring.text.clone(), kill_ring.metadata.clone())
+        });
+
         self.do_paste(&text, metadata, false, window, cx);
     }
 
@@ -29175,13 +29182,13 @@ fn collapse_multiline_range(range: Range<Point>) -> Range<Point> {
         range.start..range.start
     }
 }
-#[derive(Clone)]
 pub struct KillRing {
-    pub text: String,
-    pub metadata: Option<Vec<ClipboardSelection>>,
-    pub row: u32,
-    pub column: u32,
-    pub buffer_id: BufferId,
+    text: String,
+    metadata: Option<Vec<ClipboardSelection>>,
+    row: u32,
+    column: u32,
+    buffer_id: BufferId,
+    can_append: bool,
 }
 impl Global for KillRing {}
 
